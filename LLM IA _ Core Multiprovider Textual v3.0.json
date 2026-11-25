@@ -1,0 +1,623 @@
+{
+  "name": "LLM IA | Core Multiprovider Textual v3.0",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1376,
+        -240
+      ],
+      "id": "79902d7c-eea1-4ae6-beaf-75e292cf4b7f",
+      "name": "Start LLM"
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nlet api = items[0]?.json;\nif (Array.isArray(api)) api = api[0];\n\nconst entrada = $('Start LLM').first().json;\nif (!api?.dsc_api_key) throw new Error('CORE LLM: API Key Gemini não encontrada.');\nif (!api?.dsc_url_servico) throw new Error('CORE LLM: modelo Gemini não encontrado.');\n\nconst modelo = String(api.dsc_url_servico).replace(/^models\\//, '').trim();\nconst system = String(entrada.MSG_Prompt_System ?? '').trim();\nconst user = String(entrada.MSG_Prompt_User ?? '').trim();\nif (!system || !user) throw new Error('CORE LLM: prompts obrigatórios não recebidos.');\n\nlet core = { tentativa_gemini: 1, max_tentativas_gemini: 5 };\ntry {\n  const inicial = $('INI CORE').first().json._core;\n  if (inicial) {\n    core.tentativa_gemini = Number(inicial.tentativa ?? 1);\n    core.max_tentativas_gemini = Number(inicial.max_tentativas ?? 5);\n  }\n} catch {}\ntry {\n  const anterior = $('IF RETRY').last().json.contexto?._core;\n  if (anterior) core = { ...core, ...anterior };\n} catch {}\n\nreturn [{\n  json: {\n    api_id: api.id,\n    api_key: api.dsc_api_key,\n    modelo,\n    txt_CMD_System: system,\n    txt_CMD_User: user,\n    _core: core,\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        -240
+      ],
+      "id": "dcbf46be-f85f-49b7-a245-58ac4ce4fcd0",
+      "name": "Normaliza"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CALL sp_get_api('gemini');",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [
+        -992,
+        -240
+      ],
+      "id": "a49b1c87-4928-4b60-8a0d-d34fc8a81d4c",
+      "name": "SP Buscar Gemini API",
+      "credentials": {
+        "mySql": {
+          "id": "n6k9l6F0jkE23ROF",
+          "name": "Catalogo APIs IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first()?.json ?? {};\nconst partes = item.candidates?.[0]?.content?.parts ?? [];\nconst textoGemini = Array.isArray(partes)\n  ? partes.filter(parte => typeof parte?.text === 'string').map(parte => parte.text).join('')\n  : '';\nconst texto = typeof item.text === 'string' ? item.text.trim() : textoGemini.trim();\n\nif (!texto) throw new Error('CORE LLM: resposta textual vazia ou inválida.');\n\nconst tokens = item.tokens\n  ?? item.usage?.total_tokens\n  ?? item.usage?.totalTokens\n  ?? item.usageMetadata?.totalTokenCount\n  ?? null;\n\nreturn [{\n  json: {\n    text: texto,\n    modelo: item.modelo ?? item.modelVersion ?? null,\n    tokens,\n    provedor: item.provedor ?? 'gemini',\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        0
+      ],
+      "id": "7e8ab275-29c5-4c44-b0cb-8acbd66f2542",
+      "name": "Normaliza Resposta LLM"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "table": {
+          "__rl": true,
+          "value": "Config_API_IA",
+          "mode": "list",
+          "cachedResultName": "Config_API_IA",
+          "cachedResultUrl": ""
+        },
+        "dataMode": "defineBelow",
+        "columnToMatchOn": "id",
+        "valueToMatchOn": "={{ $json.api_id }}",
+        "valuesToSend": {
+          "values": [
+            {
+              "column": "dth_bloqueio_ate",
+              "value": "={{ $now.plus({ minutes: 60 }).format('yyyy-MM-dd HH:mm:ss') }}"
+            },
+            {
+              "column": "dsc_status",
+              "value": "=Erro: {{ $json.erro }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [
+        -608,
+        16
+      ],
+      "id": "92fd07a0-0485-4ce0-9495-bd5ed5ff2670",
+      "name": "Congela API",
+      "credentials": {
+        "mySql": {
+          "id": "n6k9l6F0jkE23ROF",
+          "name": "Catalogo APIs IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map(item => ({\n  json: {\n    ...item.json,\n\n    _core: {\n      tentativa: 1,\n      max_tentativas: 5\n    }\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1200,
+        -240
+      ],
+      "id": "11f4475f-3d24-464d-9811-25d374120fd3",
+      "name": "INI CORE"
+    },
+    {
+      "parameters": {
+        "jsCode": "const erro = $('Interpretar Gemini').last().json;\nconst entrada = $('Start LLM').first().json;\nlet core = { tentativa_gemini: 1, max_tentativas_gemini: 5 };\ntry {\n  const anterior = $('IF RETRY').last().json.contexto?._core;\n  if (anterior) core = { ...core, ...anterior };\n} catch {}\n\nreturn [{\n  json: {\n    _route: 'fallback_cloudflare',\n    provedor_origem: 'gemini',\n    api_id_gemini: erro.api_id ?? null,\n    erro_gemini: erro.erro ?? 'Falha Gemini sem diagnóstico.',\n    MSG_Prompt_System: entrada.MSG_Prompt_System,\n    MSG_Prompt_User: entrada.MSG_Prompt_User,\n    _core: core,\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        16
+      ],
+      "id": "8f5c9254-2b31-49ee-8e76-6d2122271874",
+      "name": "CONTADOR RETRY"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first()?.json ?? {};\nconst contexto = item.contexto;\nconst core = contexto?._core;\n\nif (item.provedor !== 'cloudflare' || item._route !== 'error') {\n  throw new Error('CORE LLM: entrada fora da rota de falha Cloudflare.');\n}\nif (!contexto || !core) {\n  throw new Error('CORE LLM: contexto de tentativas ausente.');\n}\n\nconst tentativaAtual = Number(core.tentativa_gemini);\nconst maxTentativas = Number(core.max_tentativas_gemini);\nif (!Number.isInteger(tentativaAtual) || !Number.isInteger(maxTentativas) || tentativaAtual < 1 || maxTentativas < 1) {\n  throw new Error('CORE LLM: contador ou limite de tentativas Gemini inválido.');\n}\nif (tentativaAtual >= maxTentativas) {\n  throw new Error('CORE LLM: Cloudflare falhou (' + (item.code ?? 'erro') + '; HTTP ' + (item.status_code ?? 'indisponível') + ') e o limite de ' + maxTentativas + ' tentativas Gemini foi atingido.');\n}\n\nreturn [{\n  json: {\n    ...item,\n    _route: 'retry_gemini',\n    contexto: {\n      ...contexto,\n      _core: {\n        ...core,\n        tentativa_gemini: tentativaAtual + 1,\n        ultimo_provedor: 'gemini',\n        motivo_retorno: 'falha_cloudflare',\n        ultimo_erro_cloudflare: {\n          codigo: item.code ?? null,\n          http_status: item.status_code ?? null,\n        },\n      },\n    },\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        368
+      ],
+      "id": "e9582c81-78fb-4d92-be2e-8b6872467e8b",
+      "name": "IF RETRY"
+    },
+    {
+      "parameters": {
+        "content": "##  LLM IA | FLASH GEMINI COM PROXY",
+        "height": 240,
+        "width": 800
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1056,
+        -304
+      ],
+      "typeVersion": 1,
+      "id": "62b2b4e0-b0cb-487a-8602-81baf110e5f7",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "##  LLM IA | WORKER CLOUDFLARE",
+        "height": 240,
+        "width": 752,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -1008,
+        224
+      ],
+      "typeVersion": 1,
+      "id": "ae54154c-8522-4fc9-82a6-e4aafaddd23f",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://api.cloudflare.com/client/v4/accounts/' + $json.contexto.account_id + '/ai/run/' + $json.contexto.modelo }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $json.contexto.api_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.contexto.request_body }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "7090edcb-b537-4d22-b3c8-ec980ce6f21f",
+      "name": "Cloudflare Workers AI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -608,
+        288
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const contexto = $('Preparar Conta Cloudflare').last().json.contexto;\nconst response = $json ?? {};\nconst status = Number(response.statusCode ?? 0);\nconst body = response.body ?? response;\nconst result = body?.result ?? {};\nconst text = typeof result.response === 'string' ? result.response.trim() : '';\n\nif (status >= 200 && status < 300 && body.success !== false && text) {\n  return [{\n    json: {\n      _route: 'success',\n      provedor: 'cloudflare',\n      contexto,\n      text,\n      modelo: contexto.modelo,\n      usage: result.usage ?? null,\n    },\n  }];\n}\n\nlet code;\nif (status === 429) code = 'LIMIT_EXCEEDED';\nelse if (status === 401 || status === 403) code = 'AUTHENTICATION_FAILED';\nelse if (status === 404) code = 'MODEL_UNAVAILABLE';\nelse if ([408, 425, 500, 502, 503, 504].includes(status) || status === 0) code = 'UPSTREAM_UNAVAILABLE';\nelse if (status >= 200 && status < 300) code = 'INVALID_RESPONSE';\nelse if (status >= 400) code = 'CLOUDFLARE_API_ERROR';\nelse code = 'COMMUNICATION_ERROR';\n\nreturn [{\n  json: {\n    _route: 'error',\n    provedor: 'cloudflare',\n    contexto,\n    code,\n    status_code: status || null,\n    diagnostic: 'Falha na chamada Cloudflare Workers AI.',\n  },\n}];"
+      },
+      "id": "8b707dd7-2859-4a18-ab45-abf52d373ff3",
+      "name": "Interpretar Resposta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "CALL sp_get_api('cloudflare');",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [
+        -976,
+        288
+      ],
+      "id": "30dfab1f-7723-4644-b0b9-d6a602e9e49c",
+      "name": "SP | Buscar API-KEY Cloudflare",
+      "credentials": {
+        "mySql": {
+          "id": "n6k9l6F0jkE23ROF",
+          "name": "Catalogo APIs IA"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "function encontrarRegistro(valor, profundidade = 0) {\n  if (profundidade > 6 || valor == null || typeof valor !== 'object') return null;\n  if (!Array.isArray(valor) && Object.prototype.hasOwnProperty.call(valor, 'dsc_api_key')) return valor;\n  for (const item of Object.values(valor)) {\n    const registro = encontrarRegistro(item, profundidade + 1);\n    if (registro) return registro;\n  }\n  return null;\n}\n\nconst api = encontrarRegistro($input.all().map(item => item.json));\nif (!api || api.id == null) throw new Error('CORE Cloudflare: nenhuma conta disponível na SP.');\n\nconst accountId = String(api.dsc_api_key ?? '').trim();\nconst apiToken = String(api.dsc_api_secret ?? '').trim();\nif (!/^[a-f0-9]{32}$/i.test(accountId)) throw new Error('CORE Cloudflare: Account ID ausente ou inválido no cadastro.');\nif (!apiToken) throw new Error('CORE Cloudflare: token ausente no cadastro.');\n\nconst entrada = $('Start LLM').first().json;\nconst system = String(entrada.MSG_Prompt_System ?? '').trim();\nconst user = String(entrada.MSG_Prompt_User ?? '').trim();\nif (!system || !user) throw new Error('CORE Cloudflare: prompts de entrada ausentes.');\n\nlet core = { tentativa_gemini: 1, max_tentativas_gemini: 5 };\ntry {\n  const anterior = $('IF RETRY').last().json.contexto?._core;\n  if (anterior) core = { ...core, ...anterior };\n} catch {}\n\nreturn [{\n  json: {\n    contexto: {\n      account_id: accountId,\n      api_id: api.id,\n      api_token: apiToken,\n      modelo: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',\n      request_body: {\n        messages: [\n          { role: 'system', content: system },\n          { role: 'user', content: user },\n        ],\n        max_tokens: (() => { const value = Number($('Start LLM').first().json.MSG_Max_Tokens); return Number.isInteger(value) && value > 0 ? value : 2048; })(),\n        stream: false,\n      },\n      _core: core,\n    },\n  },\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -800,
+        288
+      ],
+      "id": "acba181e-5db7-4029-837b-4892d7b3f70e",
+      "name": "Preparar Conta Cloudflare"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://n8n-gemini-proxy.core360.workers.dev/v1beta/models/' + $json.modelo + ':generateContent' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-goog-api-key",
+              "value": "={{ $json.api_key }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Proxy-Key",
+              "value": "={{ $env.M360_GEMINI_PROXY_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n{\n  \"system_instruction\": {\n    \"parts\": [\n      {\n        \"text\": $json.txt_CMD_System\n      }\n    ]\n  },\n  \"contents\": [\n    {\n      \"role\": \"user\",\n      \"parts\": [\n        {\n          \"text\": $json.txt_CMD_User\n        }\n      ]\n    }\n  ]\n}\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -608,
+        -240
+      ],
+      "id": "a4d831f0-eae3-4a9b-8d0f-c3f78b9f4661",
+      "name": "Gemini IA | Proxy Indireto",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "15b22bac-a69d-479c-bc06-bff03c9c4007",
+              "leftValue": "={{ $json._route }}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "8e8fb1db-1d12-4466-abac-acab48396876",
+      "name": "IF | Sucesso?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -176,
+        288
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $json ?? {};\nconst gemini = $('Normaliza').first().json;\nconst candidates = payload.candidates ?? payload.body?.candidates ?? [];\nconst parts = candidates[0]?.content?.parts ?? [];\nconst texto = parts.map(p => p?.text ?? '').join('').trim();\nconst rawErro = payload.error?.message ?? payload.error ?? payload.message ?? payload.body?.error?.message ?? '';\nconst sucesso = !rawErro && texto.length > 0;\nconst statusCode = Number(payload.statusCode ?? payload.status ?? payload.error?.code ?? payload.error?.statusCode ?? payload.error?.httpCode ?? 0) || null;\nreturn [{ json: { ...payload, _route: sucesso ? 'success' : 'error', api_id: gemini.api_id, provedor: 'gemini', fallback_provedor: 'cloudflare', modelo: gemini.modelo ?? null, text: sucesso ? texto : '', tokens: payload.usageMetadata?.totalTokenCount ?? null, status_code: statusCode, erro: sucesso ? null : String(rawErro || 'Gemini retornou resposta vazia ou sem candidates válidos.').trim().slice(0, 1000), execution_id: $execution.id, timestamp: $now.toISO(), alerta_tipo: sucesso ? null : 'gemini_fallback' } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        -240
+      ],
+      "id": "beec4e82-028e-4d63-b335-4ff5429fcd34",
+      "name": "Interpretar Gemini"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "593741a5-b8fd-4987-b70f-17c27d82ef2f",
+              "leftValue": "={{ $json._route }}",
+              "rightValue": "success",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        -176,
+        -240
+      ],
+      "id": "436c4006-c6d7-444a-a9d7-6162652862ea",
+      "name": "IF Gemini Sucesso?"
+    },
+    {
+      "parameters": {
+        "sendTo": "contato@energialimpa.live",
+        "subject": "=[M360] Fallback Gemini → Cloudflare | Execução {{ $json.execution_id ?? $execution.id }}",
+        "message": "=<h2>Fallback Gemini → Cloudflare iniciado</h2><p>A chamada primária Gemini falhou e o CORE iniciou a contingência pelo Cloudflare Workers AI.</p><ul><li><b>Modelo Gemini:</b> {{ $json.modelo ?? 'n/d' }}</li><li><b>Provedor alternativo:</b> {{ $json.fallback_provedor ?? 'cloudflare' }}</li><li><b>Status HTTP:</b> {{ $json.status_code ?? 'n/d' }}</li><li><b>ID da execução:</b> {{ $json.execution_id ?? $execution.id }}</li><li><b>Horário:</b> {{ $json.timestamp ?? $now.toISO() }}</li><li><b>Erro:</b> {{ String($json.erro ?? 'n/d').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;') }}</li></ul>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -960,
+        16
+      ],
+      "id": "314d4714-b84f-4234-896c-95c5ec462fc2",
+      "name": "Alerta | Monitora",
+      "webhookId": "b785c9ab-a879-4ca2-ac8f-18aa5b2c8899",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "r8ZF0ckph58DtnT6",
+          "name": "Gmail Flow N8N [ luzia.aires1010 ]"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {
+    "Start LLM": [
+      {
+        "json": {
+          "MSG_Prompt_User": "Você é um redator profissional especializado em SEO e cobertura jornalística.\n\nSua tarefa é reescrever a notícia fornecida, criando um conteúdo ORIGINAL, claro e informativo, sem copiar trechos do texto base, mas preservando integralmente os fatos, contexto e mensagem principal.\n\nTÍTULO: Bicicleta elétrica S9 custa R$ 4.602, tem motor de 750 W e promete rodar até 45 km\nCONTEÚDO: Uma bicicleta elétrica com aparência de motocicleta, pneus largos, freios hidráulicos e preço inferior a R$ 5 mil começa a ganhar espaço no comércio eletrônico brasileiro. Trata-se da S9, também identificada comercialmente como NY-S9-2, encontrada por R$ 4.602 no Mercado Livre em novembro de 2026. O modelo oferece motor de 750 W, velocidade máxima anunciada de 32 km/h e autonomia de até 45 quilômetros por recarga. A proposta é atender consumidores que procuram uma alternativa econômica para pequenos deslocamentos urbanos. Além do preço competitivo, a bicicleta chama a atenção pelo visual retrô, com farol circular, banco alongado, acabamento preto e pneus largos, características que remetem às motocicletas clássicas. Motor de 750 W e velocidade de até 32 km/h A S9 utiliza um motor elétrico de 750 W alimentado por uma bateria de lítio de 48 V e 12 Ah, com capacidade energética de 576 Wh. O conjunto permite que o usuário realize deslocamentos cotidianos com assistência elétrica, reduzindo o esforço físico necessário durante os trajetos. Outro diferencial está nos pneus de quatro polegadas de largura, montados em rodas de aro 16, que podem contribuir para a estabilidade em pisos irregulares. Freios hidráulicos e chave por aproximação Entre os equipamentos anunciados para a S9 estão os freios hidráulicos, tecnologia que também aparece em bicicletas elétricas de categorias superiores. O sistema utiliza fluido hidráulico para transmitir a força aplicada nas manetes, proporcionando maior precisão na frenagem quando corretamente ajustado. A bicicleta também possui sistema de acionamento por NFC, permitindo a ativação eletrônica por meio de um cartão de aproximação. O recurso dificulta o acionamento não autorizado do motor, mas não substitui a utilização de cadeados e outros dispositivos antifurto. Bateria tem autonomia anunciada de 45 quilômetros A bateria de 12 Ah é um dos principais pontos que merecem atenção antes da compra. Embora os vendedores brasileiros anunciem autonomia entre 40 e 45 quilômetros, o alcance efetivo depende de fatores como peso do condutor, velocidade, subidas, pressão dos pneus e utilização do acelerador. Nos Estados Unidos, uma versão comercializada sob o nome PostJoy S9 oferece bateria de 48 V e 20 Ah, equivalente a 960 Wh. Isso significa que a configuração brasileira possui capacidade energética 40% inferior à dessa versão norte-americana. Você pode gostar Renault Niagara chega ao Brasil por R$ 139.990 com motor turbo de 160 cv para desafiar a Fiat Toro Scooter elétrica X12 roda até 50 km por carga, suporta 180 kg e dispensa CNH Dólar cai a R$ 5,80 com plano de Lula para controlar gastos públicos SYM Joyride 300 2027 chega por R$ 27.990 com novo visual e mais conforto Royal Enfield confirma fábrica no Brasil e nova Himalayan 750 que pode custar menos de R$ 40 mil BYD Dolphin GT chega em 2027, mas elétrico de 177 cv já disponível pode surpreender O tempo estimado de recarga é de seis a oito horas, com carregador compatível com diferentes tensões da rede elétrica. Bicicleta elétrica S9 precisa de CNH e emplacamento? Apesar de ser comercializada como bicicleta elétrica, a presença de acelerador modifica seu possível enquadramento na legislação brasileira. A Resolução nº 996/2023 do Conselho Nacional de Trânsito (Contran) estabelece que equipamentos autopropelidos podem circular sem emplacamento e habilitação quando atendem aos seguintes requisitos: Potência nominal de até 1.000 W; Velocidade máxima de fabricação de 32 km/h; Largura máxima de 70 centímetros; Distância entre eixos de até 130 centímetros. Segundo as especificações comerciais, a S9 possui guidão com 64 centímetros de largura e distância entre eixos de 110 centímetros. Caso essas características correspondam efetivamente ao produto entregue, o modelo poderá ser enquadrado como equipamento de mobilidade individual autopropelido, dispensando CNH e emplacamento. O consumidor deverá respeitar as regras municipais de circulação e verificar a presença dos equipamentos obrigatórios de segurança. Ficha técnica da bicicleta elétrica S9 Característica Especificação anunciada Modelo NY-S9-2 Motor 750 W Velocidade máxima 32 km/h Bateria Lítio de 48 V e 12 Ah Capacidade energética 576 Wh Autonomia Até 45 km Recarga 6 a 8 horas Rodas Aro 16 Pneus 16 x 4 polegadas Freios Hidráulicos Acionamento NFC Peso 33 kg Capacidade de carga Até 150 kg Altura do banco 78 cm Entre-eixos 110 cm Preço encontrado R$ 4.602 Bicicleta elétrica S9 vale a pena? Por menos de R$ 5 mil, a S9 apresenta um conjunto de equipamentos interessante para consumidores que realizam trajetos curtos, como deslocamentos até o trabalho, faculdade, supermercados e estabelecimentos comerciais. Entretanto, seu peso de 33 kg pode dificultar o transporte por escadas, enquanto a capacidade da bateria exige planejamento para percursos mais extensos. Também é importante verificar a disponibilidade de assistência técnica, garantia, peças de reposição e o custo de uma eventual substituição da bateria. O crescimento da oferta de bicicletas elétricas importadas amplia as opções de mobilidade urbana no Brasil. Entretanto, o preço não deve ser o único critério de escolha: segurança, durabilidade e conformidade com a legislação são igualmente importantes.",
+          "MSG_Prompt_System": "Seu Objetivo é produzir um novo artigo jornalístico sobre o tema, aproveite todos os insumos com profundidade e densidade para entregar um conteúdo rico e envolvente.\n\n# REGRAS CRÍTICAS\n- Produzir conteúdo com linguagem natural, envolvente e fluida\n- Adicionar contexto relevante (impacto, cenário, próximos jogos)\n- Evitar frases genéricas\n- Texto deve parecer jornalismo real\n\n# ESTRUTURA\n1. Não incluir título no novo conteúdo\n2. Desenvolvimento com contexto e detalhes\n6. Inicie com um bloco de texto para chamada, o bloco é um destaque de forma resumida da notícia, o bloco deve conter até 30 palavras e aninhado com as tags HTML: <h3><i></i></h3>.\n\n# INTRODUÇÃO (2 a 3 parágrafos)\n1. Contextualize o fato principal\n2. Destaque o ponto mais relevante da notícia\n\n# DESENVOLVIMENTO\n1. Com profundidade e densidade, desenvolva com pelo menos 400 palavras\n2. Detalhe as informações importantes\n3. Use Sub Títulos formatado <h2></h2> quando fizer sentido\n4. Separe em blocos curtos (boa leitura)\n5. Para as citações e falas, geralmente entre aspas, formatar esse texto com bloco HTML adequado para uma citação do WordPres, transforme o texto citado entre aspas em itálico: <i></i>\n\n# CONCLUSÃO\n1. Retome o impacto da notícia\n2. Pode incluir projeção, próximos passos ou contexto futuro\n\n# DIRETRIZES DE ESCRITA\n- NÃO copie frases do conteúdo original\n- NÃO invente informações\n- NÃO use linguagem robótica\n- Use tom jornalístico, direto e informativo\n- Priorize clareza e escaneabilidade\n- Parágrafos curtos (máx. 3 linhas)\n\n# SEO\n1. Inclua naturalmente palavras-chave relacionadas ao tema\n2. Evite repetição excessiva\n3. Inserir marcação HTML de destaque nas plavras-chave, nomes próprios e siglas: <b></b>\n4. Use variações semânticas\n\n# REGRAS IMPORTANTES\n1. NÃO usar markdown\n2. NÃO incluir comentários ou explicações fora do JSON\n3. NÃO incluir marcações típicas JSON: ```json\n4. Sem Legendas, apenas o conteúdo puro\n5. Sem mensagem de sistema\n\n---\n\nAgora gere o conteúdo com base nos dados fornecidos."
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Start LLM": {
+      "main": [
+        [
+          {
+            "node": "INI CORE",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SP Buscar Gemini API": {
+      "main": [
+        [
+          {
+            "node": "Normaliza",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normaliza": {
+      "main": [
+        [
+          {
+            "node": "Gemini IA | Proxy Indireto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Congela API": {
+      "main": [
+        [
+          {
+            "node": "CONTADOR RETRY",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "INI CORE": {
+      "main": [
+        [
+          {
+            "node": "SP Buscar Gemini API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CONTADOR RETRY": {
+      "main": [
+        [
+          {
+            "node": "SP | Buscar API-KEY Cloudflare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF RETRY": {
+      "main": [
+        [
+          {
+            "node": "SP Buscar Gemini API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cloudflare Workers AI": {
+      "main": [
+        [
+          {
+            "node": "Interpretar Resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar Resposta": {
+      "main": [
+        [
+          {
+            "node": "IF | Sucesso?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SP | Buscar API-KEY Cloudflare": {
+      "main": [
+        [
+          {
+            "node": "Preparar Conta Cloudflare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Conta Cloudflare": {
+      "main": [
+        [
+          {
+            "node": "Cloudflare Workers AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini IA | Proxy Indireto": {
+      "main": [
+        [
+          {
+            "node": "Interpretar Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "IF | Sucesso?": {
+      "main": [
+        [
+          {
+            "node": "Normaliza Resposta LLM",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "IF RETRY",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar Gemini": {
+      "main": [
+        [
+          {
+            "node": "IF Gemini Sucesso?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Gemini Sucesso?": {
+      "main": [
+        [
+          {
+            "node": "Normaliza Resposta LLM",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Alerta | Monitora",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Congela API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alerta | Monitora": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "40ff48f4-6b25-4b0c-ab40-448994316ff8",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9f769af33e9c8cdfc44e726022a0e6b9f585fd6f2577f3c000a6028827d25ddd"
+  },
+  "nodeGroups": [],
+  "id": "uaIBJxEZlGoNv4I2",
+  "tags": []
+}

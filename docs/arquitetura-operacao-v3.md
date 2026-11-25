@@ -4,7 +4,7 @@
 
 - Workflow publicado no n8n: **LLM IA | Core Multiprovider Textual v3.0**.
 - Validação operacional informada em 25/11/2026: houve execuções com Gemini e execuções que desviaram para Cloudflare Workers AI, confirmando a troca de provedor.
-- O arquivo de exportação JSON do workflow será versionado na raiz do repositório quando a cópia exportada estiver disponível para leitura.
+- O export multiprovider e o workflow Cloudflare de referência estão versionados neste repositório.
 
 ## Objetivo
 
@@ -50,6 +50,14 @@ O campo `provedor` identifica qual serviço concluiu a chamada. O campo `tokens`
 - Respostas Cloudflare bem-sucedidas chegam ao normalizador compartilhado.
 - A saída Cloudflare observada preservou `text`, `modelo`, `tokens` e `provedor: "cloudflare"`.
 
+## Configuração segura do proxy Gemini
+
+O export de produção tinha um valor fixo no header `X-Proxy-Key`. Esse valor foi removido da cópia versionada e substituído por `={{ $env.M360_GEMINI_PROXY_KEY }}`.
+
+Antes de importar ou executar o JSON versionado, configure `M360_GEMINI_PROXY_KEY` no ambiente seguro do n8n e confirme que o ambiente permite acesso à variável em expressões. Nunca copie a chave para o workflow, para esta documentação ou para o GitHub.
+
+O export Cloudflare de referência utiliza a expressão de autenticação existente e a seleção da chave via MySQL; não versionar credenciais, chaves, tokens ou senhas.
+
 ## Acompanhamento operacional
 
 Ao observar uma execução de fallback, conferir:
@@ -62,9 +70,11 @@ Ao observar uma execução de fallback, conferir:
 - se houver falha Cloudflare, comportamento do contador e condição de retorno para nova seleção Gemini;
 - estrutura HTML final nas etapas editoriais de título, conteúdo e fiscalização HTML.
 
-Não executar rotação de contas para contornar limites do provedor. Manter credenciais nos mecanismos seguros do n8n/MySQL; não versionar chaves, tokens ou senhas.
+Não executar rotação de contas para contornar limites do provedor.
 
-## Itens de repositório
+## Arquivos de referência
 
-- Exportação JSON: `LLM IA _ Core Multiprovider Textual v3.0.json` (pendente de inclusão).
-- Esta documentação registra a arquitetura e o comportamento observados; atualizar junto com o workflow se houver mudança de nodes, conexões, limites ou contrato.
+- Export multiprovider: [LLM IA _ Core Multiprovider Textual v3.0.json](../LLM%20IA%20_%20Core%20Multiprovider%20Textual%20v3.0.json).
+- Workflow Cloudflare de referência: [LLM IA Cloudflare _ Workers AI Textual 24-11-2026.json](../references/LLM%20IA%20Cloudflare%20_%20Workers%20AI%20Textual%2024-11-2026.json).
+
+Atualizar esta documentação se houver mudanças de nodes, conexões, política de retry, configuração de provedor ou contrato de saída.
